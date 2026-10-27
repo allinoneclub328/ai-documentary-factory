@@ -8,15 +8,24 @@ name: AI Documentary Factory
       - main
 
 jobs:
-  test:
+  generate-story:
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Test cloud automation
-        run: |
-          echo "AI Documentary Factory started!"
-          echo "Telugu and Hindi documentary automation is coming next."
-          echo "Cloud workflow is working."
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate documentary story
+        run: python generate_story.py "Dr. Vijayalakshmi Deshmane"
+
+      - name: Save story package
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentary-story-package
+          path: output/story.json
+          if-no-files-found: error
