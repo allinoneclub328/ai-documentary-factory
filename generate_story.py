@@ -50,9 +50,11 @@ def generate_documentary(topic):
     return story
 
 if __name__ == "__main__":
-    topic = input("Enter a documentary subject: ").strip()
+    import sys
+
+    topic = " ".join(sys.argv[1:]).strip()
 
     if not topic:
-        raise SystemExit("Please enter a subject.")
+        topic = "Dr. Vijayalakshmi Deshmane"
 
     generate_documentary(topic)
