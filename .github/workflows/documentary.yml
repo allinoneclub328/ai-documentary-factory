@@ -1,1 +1,20 @@
 
+
+name: AI Documentary Factory
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Test cloud automation
+        run: |
+          echo "AI Documentary Factory started!"
+          echo "Telugu and Hindi documentary automation is coming next."
+          echo "Cloud workflow is working."
