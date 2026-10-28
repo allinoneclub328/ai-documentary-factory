@@ -2,59 +2,90 @@
 import json
 import os
 import sys
-import urllib.request
+import time
+import random
 import urllib.error
+import urllib.request
 from pathlib import Path
-from datetime import datetime, timezone
 
+# Gemini model
 MODEL = "gemini-3.8-flash"
-OUTPUT_DIR = Path("output")
+
+# Output file
+OUTPUT_FILE = Path("output/story.json")
 
 
-def generate_documentary(topic):
+def generate_documentary(person_name):
+    """Generate a documentary story using the Gemini API."""
+
     api_key = os.environ.get("GEMINI_API_KEY")
 
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY secret is missing.")
+        raise RuntimeError(
+            "GEMINI_API_KEY is missing. "
+            "Add it to your GitHub repository secrets."
+        )
 
     prompt = f"""
-Create a documentary script package about: {topic}
+You are an experienced documentary filmmaker and researcher.
+
+Create a compelling, fact-based documentary story about:
+{person_name}
+
+Requirements:
+1. Research-minded storytelling with a strong opening hook.
+2. Explain the person's background, challenges, work, and impact.
+3. Build a clear narrative with engaging character development.
+4. Include a meaningful climax and memorable ending.
+5. Use simple, natural language suitable for voice-over narration.
+6. Do not invent quotes, events, awards, dates, or achievements.
+7. Clearly mark any information that needs independent verification.
+8. Avoid presenting uncertain information as established fact.
 
 Return ONLY valid JSON with this structure:
 {{
-  "topic": "{topic}",
-  "created_at": "{datetime.now(timezone.utc).isoformat()}",
-  "fact_check_required": true,
-  "languages": {{
-    "en": {{"title": "...", "script": "..."}},
-    "te": {{"title": "...", "script": "..."}},
-    "hi": {{"title": "...", "script": "..."}}
+  "person": "Person's name",
+  "title": "Documentary title",
+  "hook": "Opening hook",
+  "research_notes": [
+    "Important fact to verify"
+  ],
+  "story": {{
+    "introduction": "Opening section",
+    "background": "Early life and context",
+    "struggle": "Challenges and obstacles",
+    "turning_point": "Key turning point",
+    "impact": "Work and impact",
+    "climax": "Narrative climax",
+    "conclusion": "Memorable ending"
   }},
-  "verification_notes": ["claims that need checking"]
+  "telugu_adaptation": "A natural Telugu adaptation of the story",
+  "hindi_adaptation": "A natural Hindi adaptation of the story",
+  "fact_check_required": true
 }}
 
-Requirements:
-- Write an engaging, cinematic documentary narration.
-- Create separate, natural scripts in English, Telugu and Hindi.
-- Include a strong opening, chronological storytelling and a conclusion.
-- Never invent quotations, dates, awards or events.
-- If a fact is uncertain, flag it in verification_notes.
-- Do not claim that facts have been independently verified.
-- Keep each script suitable for a short initial documentary draft.
+Make the story detailed enough to serve as the foundation
+for a documentary video. Do not claim you performed live
+research unless you actually did.
 """
 
     payload = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }],
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
+        ],
         "generationConfig": {
-            "responseMimeType": "application/json",
-            "maxOutputTokens": 5000
+            "temperature": 0.7,
+            "responseMimeType": "application/json"
         }
     }
 
     request = urllib.request.Request(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent",
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{MODEL}:generateContent",
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -63,42 +94,118 @@ Requirements:
         method="POST"
     )
 
+    result = None
+    retryable_codes = {408, 429, 500, 502, 503, 504}
+
+    # Retry temporary API failures up to 4 times.
+    for attempt in range(4):
+        try:
+            print(f"Calling Gemini API (attempt {attempt + 1}/4)...")
+
+            with urllib.request.urlopen(
+                request,
+                timeout=180
+            ) as response:
+                result = json.loads(
+                    response.read().decode("utf-8")
+                )
+
+            break
+
+        except urllib.error.HTTPError as error:
+            error_code = error.code
+            error_body = error.read().decode(
+                "utf-8", errors="replace"
+            )
+
+            if error_code not in retryable_codes:
+                raise RuntimeError(
+                    f"Gemini API returned HTTP {error_code}.\n"
+                    f"Response: {error_body[:1500]}"
+                ) from None
+
+            if attempt == 3:
+                raise RuntimeError(
+                    f"Gemini API remained unavailable after 4 attempts. "
+                    f"Last HTTP status: {error_code}.\n"
+                    f"Response: {error_body[:1500]}"
+                ) from None
+
+            delay = (2 ** (attempt + 1)) + random.uniform(0, 1)
+
+            print(
+                f"Temporary API error {error_code}. "
+                f"Retrying in {delay:.1f} seconds..."
+            )
+            time.sleep(delay)
+
+        except (urllib.error.URLError, TimeoutError) as error:
+            if attempt == 3:
+                raise RuntimeError(
+                    "Gemini could not be reached after 4 attempts. "
+                    f"Connection error: {error}"
+                ) from None
+
+            delay = (2 ** (attempt + 1)) + random.uniform(0, 1)
+
+            print(
+                f"Connection problem. "
+                f"Retrying in {delay:.1f} seconds..."
+            )
+            time.sleep(delay)
+
+    if result is None:
+        raise RuntimeError("Gemini did not return a response.")
+
+    # Extract the generated text.
     try:
-        with urllib.request.urlopen(request, timeout=180) as response:
-            result = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
+        generated_text = (
+            result["candidates"][0]["content"]["parts"][0]["text"]
+        )
+    except (KeyError, IndexError, TypeError):
         raise RuntimeError(
-            f"Gemini API request failed with HTTP {error.code}. "
-            "Check API access, model availability and usage limits."
+            "Gemini returned an unexpected response:\n"
+            + json.dumps(result, ensure_ascii=False)[:1500]
         ) from None
 
-    candidates = result.get("candidates", [])
-    if not candidates:
-        raise RuntimeError("Gemini returned no generated content.")
+    # Convert the JSON response into a Python object.
+    try:
+        story_data = json.loads(generated_text)
+    except json.JSONDecodeError:
+        raise RuntimeError(
+            "Gemini did not return valid JSON. Response:\n"
+            + generated_text[:1500]
+        ) from None
 
-    parts = candidates[0].get("content", {}).get("parts", [])
-    text = "".join(part.get("text", "") for part in parts)
+    return story_data
 
-    story = json.loads(text)
 
-    for language in ("en", "te", "hi"):
-        if not story.get("languages", {}).get(language, {}).get("script"):
-            raise RuntimeError(f"Missing script for language: {language}")
+def main():
+    if len(sys.argv) > 1:
+        person_name = " ".join(sys.argv[1:])
+    else:
+        person_name = "Dr. Vijayalakshmi Deshmane"
 
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    output_file = OUTPUT_DIR / "story.json"
-    output_file.write_text(
-        json.dumps(story, ensure_ascii=False, indent=2),
-        encoding="utf-8"
-    )
+    print(f"Generating documentary package for: {person_name}")
 
-    print(f"Gemini generated the story package: {output_file}")
+    story_data = generate_documentary(person_name)
+
+    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    with OUTPUT_FILE.open("w", encoding="utf-8") as file:
+        json.dump(
+            story_data,
+            file,
+            ensure_ascii=False,
+            indent=2
+        )
+
+    print(f"Documentary package saved to: {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":
-    topic = " ".join(sys.argv[1:]).strip()
-
-    if not topic:
-        topic = "Dr. Vijayalakshmi Deshmane"
-
-    generate_documentary(topic)
+    try:
+        main()
+    except Exception as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        sys.exit(1)
