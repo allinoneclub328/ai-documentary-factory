@@ -8,7 +8,7 @@ name: AI Documentary Factory
       - main
 
 jobs:
-  generate-story:
+  generate-documentary:
     runs-on: ubuntu-latest
 
     env:
@@ -23,12 +23,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Research documentary subject
+        run: python research.py "Dr. Vijayalakshmi Deshmane"
+
       - name: Generate documentary story
         run: python generate_story.py "Dr. Vijayalakshmi Deshmane"
 
-      - name: Save story package
+      - name: Save documentary package
         uses: actions/upload-artifact@v4
         with:
-          name: documentary-story-package
-          path: output/story.json
+          name: documentary-package
+          path: |
+            output/research.json
+            output/story.json
           if-no-files-found: error
