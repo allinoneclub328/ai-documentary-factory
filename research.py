@@ -1,10 +1,13 @@
 
 import json
+import re
 import sys
 import time
 import urllib.parse
 import urllib.request
 import urllib.error
+import xml.etree.ElementTree as ET
+from html import unescape
 from pathlib import Path
 
 
@@ -15,7 +18,6 @@ USER_AGENT = "AI-Documentary-Factory/1.0 (educational research project)"
 
 
 def fetch_json(url):
-    """Fetch JSON from a public API without requiring an API key."""
     request = urllib.request.Request(
         url,
         headers={
@@ -28,8 +30,29 @@ def fetch_json(url):
         return json.loads(response.read().decode("utf-8"))
 
 
+def fetch_text(url):
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "application/rss+xml, application/xml, text/xml"
+        }
+    )
+
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return response.read()
+
+
+def clean_html(text):
+    text = re.sub(r"<[^>]+>", " ", text or "")
+    return re.sub(r"\s+", " ", unescape(text)).strip()
+
+
+# ------------------------------------------------------------
+# SOURCE 1: WIKIPEDIA
+# ------------------------------------------------------------
+
 def search_wikipedia(person):
-    """Search English Wikipedia for potentially relevant articles."""
     params = urllib.parse.urlencode({
         "action": "query",
         "list": "search",
@@ -52,91 +75,135 @@ def search_wikipedia(person):
 
         results.append({
             "title": title,
-            "url": (
-                "https://en.wikipedia.org/?curid="
-                + str(page_id)
-            ),
-            "snippet": item.get("snippet", "")
-                .replace("<span class=\"searchmatch\">", "")
-                .replace("</span>", ""),
-            "source_type": "Wikipedia search result",
+            "url": "https://en.wikipedia.org/?curid=" + str(page_id),
+            "summary": clean_html(item.get("snippet", "")),
+            "publisher": "Wikipedia",
+            "source_type": "encyclopedia",
+            "published_date": None,
             "verification_status": "unverified"
         })
 
     return results
 
 
-def fetch_summary(title):
-    """Fetch an article summary through Wikipedia's REST API."""
-    encoded_title = urllib.parse.quote(title.replace(" ", "_"), safe="")
-    url = (
-        "https://en.wikipedia.org/api/rest_v1/page/summary/"
-        + encoded_title
-    )
+# ------------------------------------------------------------
+# SOURCE 2: GOOGLE NEWS RSS
+# ------------------------------------------------------------
 
-    try:
-        data = fetch_json(url)
+def search_google_news(person):
+    query = urllib.parse.urlencode({
+        "q": '"' + person + '"',
+        "hl": "en-IN",
+        "gl": "IN",
+        "ceid": "IN:en"
+    })
 
-        return {
-            "title": data.get("title", title),
-            "summary": data.get("extract", ""),
-            "url": data.get("content_urls", {})
-                .get("desktop", {})
-                .get("page", ""),
-            "source_type": "Wikipedia article summary",
-            "verification_status": "unverified"
-        }
+    url = "https://news.google.com/rss/search?" + query
+    xml_data = fetch_text(url)
 
-    except (urllib.error.URLError, TimeoutError, ValueError):
-        return {
+    root = ET.fromstring(xml_data)
+    results = []
+
+    for item in root.findall(".//item")[:10]:
+        title = item.findtext("title", default="").strip()
+        link = item.findtext("link", default="").strip()
+        description = item.findtext("description", default="")
+        pub_date = item.findtext("pubDate", default="").strip()
+
+        source_element = item.find("source")
+        publisher = (
+            source_element.text.strip()
+            if source_element is not None and source_element.text
+            else "Unknown publisher"
+        )
+
+        if not title or not link:
+            continue
+
+        results.append({
             "title": title,
-            "summary": "",
-            "url": (
-                "https://en.wikipedia.org/wiki/"
-                + encoded_title
-            ),
-            "source_type": "Wikipedia article",
-            "verification_status": "summary_unavailable"
-        }
+            "url": link,
+            "summary": clean_html(description),
+            "publisher": publisher,
+            "source_type": "news search result",
+            "published_date": pub_date or None,
+            "verification_status": "unverified"
+        })
 
+    return results
+
+
+# ------------------------------------------------------------
+# COMBINE AND SAVE RESEARCH
+# ------------------------------------------------------------
 
 def research_person(person):
     print(f"Researching: {person}")
-    print("Searching the free Wikipedia API...")
 
+    all_sources = []
+    errors = []
+
+    # Wikipedia search
     try:
-        search_results = search_wikipedia(person)
+        print("Searching Wikipedia...")
+        wiki_results = search_wikipedia(person)
+        all_sources.extend(wiki_results)
+        print(f"Wikipedia results: {len(wiki_results)}")
     except Exception as error:
-        raise RuntimeError(
-            "The research request failed. Check the network "
-            "and try again. Details: " + str(error)
-        ) from None
+        print(f"Wikipedia search failed: {error}")
+        errors.append({
+            "source": "Wikipedia",
+            "error": str(error)
+        })
 
-    articles = []
+    time.sleep(1)
 
-    for result in search_results:
-        title = result["title"]
-        print(f"Collecting article summary: {title}")
+    # Google News RSS search
+    try:
+        print("Searching Google News RSS...")
+        news_results = search_google_news(person)
+        all_sources.extend(news_results)
+        print(f"News results: {len(news_results)}")
+    except Exception as error:
+        print(f"News search failed: {error}")
+        errors.append({
+            "source": "Google News RSS",
+            "error": str(error)
+        })
 
-        summary = fetch_summary(title)
-        articles.append(summary)
+    # Remove duplicate URLs.
+    unique_sources = []
+    seen_urls = set()
 
-        # Be polite to the public API.
-        time.sleep(0.5)
+    for source in all_sources:
+        url = source.get("url", "").strip()
+
+        if not url or url in seen_urls:
+            continue
+
+        seen_urls.add(url)
+        unique_sources.append(source)
 
     package = {
         "person": person,
-        "research_provider": "Wikimedia APIs",
+        "research_provider": [
+            "Wikimedia APIs",
+            "Google News RSS"
+        ],
         "research_status": (
-            "results_found" if articles else "no_results_found"
+            "results_found" if unique_sources else "no_results_found"
         ),
-        "source_count": len(articles),
-        "sources": articles,
+        "source_count": len(unique_sources),
+        "sources": unique_sources,
+        "search_errors": errors,
+        "verification_status": "not_verified",
         "important_warning": (
-            "These are discovery leads, not verified facts. "
-            "Wikipedia may be incomplete or inaccurate. "
-            "Check independent reliable sources before using "
-            "claims in a documentary."
+            "Search results are research leads, not verified facts. "
+            "A news headline or search snippet is not sufficient "
+            "evidence by itself. Open the original publisher's page, "
+            "check the article date and context, and corroborate "
+            "important claims with independent reliable sources. "
+            "Multiple results may repeat the same original report."
         )
     }
 
@@ -151,7 +218,13 @@ def research_person(person):
         )
 
     print(f"Research saved to: {OUTPUT_FILE}")
-    print(f"Potential sources found: {len(articles)}")
+    print(f"Unique results: {len(unique_sources)}")
+
+    if errors:
+        print("Warning: one or more research sources failed.")
+
+    if not unique_sources:
+        print("No results found. Manual research will be needed.")
 
 
 def main():
@@ -163,7 +236,7 @@ def main():
 
     try:
         research_person(person)
-    except (RuntimeError, OSError) as error:
+    except (OSError, RuntimeError) as error:
         print(f"ERROR: {error}")
         sys.exit(1)
 
