@@ -69,19 +69,24 @@ for a documentary video. Do not claim you performed live
 research unless you actually did.
 """
 
+    
     payload = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": prompt}
-                ]
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0.7,
-            "responseMimeType": "application/json"
+    "contents": [
+        {
+            "parts": [
+                {"text": prompt}
+            ]
         }
+    ],
+    "tools": [
+        {
+            "google_search": {}
+        }
+    ],
+    "generationConfig": {
+        "temperature": 1.0
     }
+}
 
     request = urllib.request.Request(
         f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -158,19 +163,36 @@ research unless you actually did.
         raise RuntimeError("Gemini did not return a response.")
 
     # Extract the generated text.
-    try:
-        generated_text = (
-            result["candidates"][0]["content"]["parts"][0]["text"]
-        )
-    except (KeyError, IndexError, TypeError):
-        raise RuntimeError(
-            "Gemini returned an unexpected response:\n"
-            + json.dumps(result, ensure_ascii=False)[:1500]
-        ) from None
+    # Extract the generated text and Google Search research sources.
+try:
+    candidate = result["candidates"][0]
+
+    generated_text = "".join(
+        part.get("text", "")
+        for part in candidate["content"]["parts"]
+    )
+
+    grounding = candidate.get("groundingMetadata", {})
+
+    sources = [
+        {
+            "title": item["web"].get("title", "Untitled source"),
+            "url": item["web"].get("uri", "")
+        }
+        for item in grounding.get("groundingChunks", [])
+        if item.get("web", {}).get("uri")
+    ]
+
+except (KeyError, IndexError, TypeError):
+    raise RuntimeError(
+        "Gemini returned an unexpected response:\n"
+        + json.dumps(result, ensure_ascii=False)[:1500]
+    ) from None
 
     # Convert the JSON response into a Python object.
     try:
-        story_data = json.loads(generated_text)
+        story_data["research_sources"] = sources
+story_data["search_queries"] = grounding.get("webSearchQueries", [])
     except json.JSONDecodeError:
         raise RuntimeError(
             "Gemini did not return valid JSON. Response:\n"
