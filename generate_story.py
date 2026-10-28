@@ -71,11 +71,7 @@ The Google Search sources will be saved separately by the program.
                 ]
             }
         ],
-        "tools": [
-            {
-                "google_search": {}
-            }
-        ],
+      
         "generationConfig": {
             "temperature": 0.7
         }
