@@ -26,6 +26,9 @@ jobs:
       - name: Research documentary subject
         run: python research.py "Dr. Vijayalakshmi Deshmane"
 
+      - name: Generate fact-check report
+        run: python fact_check.py
+
       - name: Generate documentary story
         run: python generate_story.py "Dr. Vijayalakshmi Deshmane"
 
@@ -35,5 +38,6 @@ jobs:
           name: documentary-package
           path: |
             output/research.json
+            output/fact_check.json
             output/story.json
           if-no-files-found: error
