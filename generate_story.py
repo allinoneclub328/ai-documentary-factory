@@ -8,89 +8,84 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-# Gemini model
 MODEL = "gemini-3.5-flash-lite"
-
-# Output file
 OUTPUT_FILE = Path("output/story.json")
 
 
 def generate_documentary(person_name):
-    """Generate a documentary story using the Gemini API."""
-
     api_key = os.environ.get("GEMINI_API_KEY")
 
     if not api_key:
         raise RuntimeError(
-            "GEMINI_API_KEY is missing. "
-            "Add it to your GitHub repository secrets."
+            "GEMINI_API_KEY is missing from GitHub repository secrets."
         )
 
     prompt = f"""
-You are an experienced documentary filmmaker and researcher.
+You are a documentary researcher and experienced screenwriter.
 
-Create a compelling, fact-based documentary story about:
+Create a compelling, factual documentary story about:
 {person_name}
 
-Requirements:
-1. Research-minded storytelling with a strong opening hook.
-2. Explain the person's background, challenges, work, and impact.
-3. Build a clear narrative with engaging character development.
-4. Include a meaningful climax and memorable ending.
-5. Use simple, natural language suitable for voice-over narration.
-6. Do not invent quotes, events, awards, dates, or achievements.
-7. Clearly mark any information that needs independent verification.
-8. Avoid presenting uncertain information as established fact.
+Research requirements:
+- Use Google Search to research the person's real life and achievements.
+- Prefer official biographies, government announcements, reputable news
+  organizations, institutional websites, and published interviews.
+- Do not invent childhood events, quotes, dates, awards, statistics,
+  workplaces, patient counts, or personal experiences.
+- If a fact cannot be verified, say it needs verification.
+- Keep the story engaging without exaggerating the person's achievements.
+- Write a detailed English documentary narrative first.
+- Also provide natural Telugu and Hindi adaptations based on the same facts.
 
-Return ONLY valid JSON with this structure:
+Return ONLY valid JSON using this structure:
 {{
-  "person": "Person's name",
+  "person": "Full name",
   "title": "Documentary title",
   "hook": "Opening hook",
   "research_notes": [
-    "Important fact to verify"
+    "Facts that still require verification"
   ],
   "story": {{
-    "introduction": "Opening section",
-    "background": "Early life and context",
-    "struggle": "Challenges and obstacles",
-    "turning_point": "Key turning point",
-    "impact": "Work and impact",
-    "climax": "Narrative climax",
-    "conclusion": "Memorable ending"
+    "introduction": "Opening",
+    "background": "Verified background",
+    "struggle": "Documented challenges",
+    "turning_point": "Verified turning point",
+    "impact": "Documented achievements and impact",
+    "climax": "Narrative high point based on verified events",
+    "conclusion": "Ending"
   }},
-  "telugu_adaptation": "A natural Telugu adaptation of the story",
-  "hindi_adaptation": "A natural Hindi adaptation of the story",
+  "telugu_adaptation": "Complete Telugu documentary narration",
+  "hindi_adaptation": "Complete Hindi documentary narration",
   "fact_check_required": true
 }}
 
-Make the story detailed enough to serve as the foundation
-for a documentary video. Do not claim you performed live
-research unless you actually did.
+Do not include Markdown fences around the JSON.
+The Google Search sources will be saved separately by the program.
 """
 
-    
     payload = {
-    "contents": [
-        {
-            "parts": [
-                {"text": prompt}
-            ]
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
+        ],
+        "tools": [
+            {
+                "google_search": {}
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.7
         }
-    ],
-    "tools": [
-        {
-            "google_search": {}
-        }
-    ],
-    "generationConfig": {
-        "temperature": 1.0
     }
-}
 
     request = urllib.request.Request(
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{MODEL}:generateContent",
+        (
+            "https://generativelanguage.googleapis.com/v1beta/"
+            f"models/{MODEL}:generateContent"
+        ),
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -102,10 +97,9 @@ research unless you actually did.
     result = None
     retryable_codes = {408, 429, 500, 502, 503, 504}
 
-    # Retry temporary API failures up to 4 times.
     for attempt in range(4):
         try:
-            print(f"Calling Gemini API (attempt {attempt + 1}/4)...")
+            print(f"Gemini API attempt {attempt + 1}/4...")
 
             with urllib.request.urlopen(
                 request,
@@ -126,20 +120,20 @@ research unless you actually did.
             if error_code not in retryable_codes:
                 raise RuntimeError(
                     f"Gemini API returned HTTP {error_code}.\n"
-                    f"Response: {error_body[:1500]}"
+                    f"Response: {error_body[:2000]}"
                 ) from None
 
             if attempt == 3:
                 raise RuntimeError(
-                    f"Gemini API remained unavailable after 4 attempts. "
+                    f"Gemini failed after 4 attempts. "
                     f"Last HTTP status: {error_code}.\n"
-                    f"Response: {error_body[:1500]}"
+                    f"Response: {error_body[:2000]}"
                 ) from None
 
-            delay = (2 ** (attempt + 1)) + random.uniform(0, 1)
+            delay = 2 ** (attempt + 1) + random.uniform(0, 1)
 
             print(
-                f"Temporary API error {error_code}. "
+                f"Temporary HTTP {error_code}. "
                 f"Retrying in {delay:.1f} seconds..."
             )
             time.sleep(delay)
@@ -147,57 +141,76 @@ research unless you actually did.
         except (urllib.error.URLError, TimeoutError) as error:
             if attempt == 3:
                 raise RuntimeError(
-                    "Gemini could not be reached after 4 attempts. "
-                    f"Connection error: {error}"
+                    f"Connection failed after 4 attempts: {error}"
                 ) from None
 
-            delay = (2 ** (attempt + 1)) + random.uniform(0, 1)
-
-            print(
-                f"Connection problem. "
-                f"Retrying in {delay:.1f} seconds..."
-            )
+            delay = 2 ** (attempt + 1) + random.uniform(0, 1)
+            print(f"Connection problem. Retrying in {delay:.1f}s...")
             time.sleep(delay)
 
     if result is None:
-        raise RuntimeError("Gemini did not return a response.")
+        raise RuntimeError("Gemini returned no response.")
 
-    # Extract the generated text.
-    # Extract the generated text and Google Search research sources.
-try:
-    candidate = result["candidates"][0]
-
-    generated_text = "".join(
-        part.get("text", "")
-        for part in candidate["content"]["parts"]
-    )
-
-    grounding = candidate.get("groundingMetadata", {})
-
-    sources = [
-        {
-            "title": item["web"].get("title", "Untitled source"),
-            "url": item["web"].get("uri", "")
-        }
-        for item in grounding.get("groundingChunks", [])
-        if item.get("web", {}).get("uri")
-    ]
-
-except (KeyError, IndexError, TypeError):
-    raise RuntimeError(
-        "Gemini returned an unexpected response:\n"
-        + json.dumps(result, ensure_ascii=False)[:1500]
-    ) from None
-
-    # Convert the JSON response into a Python object.
+    # Read the generated text and search-grounding metadata.
     try:
-        story_data["research_sources"] = sources
-story_data["search_queries"] = grounding.get("webSearchQueries", [])
+        candidate = result["candidates"][0]
+        parts = candidate["content"]["parts"]
+
+        generated_text = "".join(
+            part.get("text", "")
+            for part in parts
+        )
+
+        grounding = candidate.get("groundingMetadata", {})
+
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError(
+            "Unexpected Gemini response:\n"
+            + json.dumps(result, ensure_ascii=False)[:2000]
+        ) from None
+
+    if not generated_text.strip():
+        raise RuntimeError("Gemini returned empty text.")
+
+    # Parse the story JSON.
+    try:
+        story_data = json.loads(generated_text)
+
     except json.JSONDecodeError:
         raise RuntimeError(
             "Gemini did not return valid JSON. Response:\n"
-            + generated_text[:1500]
+            + generated_text[:2000]
         ) from None
+
+    # Preserve source URLs returned by Google Search grounding.
+    sources = []
+
+    for item in grounding.get("groundingChunks", []):
+        web_item = item.get("web", {})
+        url = web_item.get("uri")
+
+        if url:
+            sources.append({
+                "title": web_item.get("title", "Untitled source"),
+                "url": url
+            })
+
+    # Remove duplicate source URLs.
+    unique_sources = []
+    seen_urls = set()
+
+    for source in sources:
+        if source["url"] not in seen_urls:
+            seen_urls.add(source["url"])
+            unique_sources.append(source)
+
+    story_data["research_sources"] = unique_sources
+    story_data["search_queries"] = grounding.get(
+        "webSearchQueries", []
+    )
+
+    # Flag for human verification before publishing.
+    story_data["fact_check_required"] = True
 
     return story_data
 
@@ -208,7 +221,7 @@ def main():
     else:
         person_name = "Dr. Vijayalakshmi Deshmane"
 
-    print(f"Generating documentary package for: {person_name}")
+    print(f"Generating documentary for: {person_name}")
 
     story_data = generate_documentary(person_name)
 
@@ -222,7 +235,8 @@ def main():
             indent=2
         )
 
-    print(f"Documentary package saved to: {OUTPUT_FILE}")
+    print(f"Story package saved to: {OUTPUT_FILE}")
+    print(f"Research sources saved: {len(story_data['research_sources'])}")
 
 
 if __name__ == "__main__":
